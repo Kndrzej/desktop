@@ -129,9 +129,10 @@ export const enableWorktreeSupport = () => true
 /**
  * Should History allow editing a historical file into the current working tree?
  *
- * Preview feature: edits never rewrite commits; they only produce uncommitted
- * working-tree changes when later commits have not touched the same path.
+ * Enabled by default in this fork. Edits never rewrite commits; they only
+ * produce uncommitted working-tree changes when later commits have not touched
+ * the same path.
  */
 export function enableEditFromHistory(): boolean {
-  return enableDevelopmentFeatures()
+  return true
 }

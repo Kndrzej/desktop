@@ -45,7 +45,14 @@ If later commits touched the same path, editing is blocked with:
 
 Historical commits are a **reference/source**, never a write target.
 
-## Safety logic
+## Safety / security
+
+- Paths must stay inside the repository (`resolveWithin` + traversal checks).
+- Commit identifiers are validated before being passed to Git.
+- Git is invoked with argument arrays (no shell string concatenation).
+- Line edits cannot introduce embedded newlines.
+- Binary files (NUL bytes) are refused.
+- No extra npm packages, native addons, or install hooks were added for this feature.
 
 Before editing is enabled for `(commit SHA, file path)`:
 
@@ -56,39 +63,35 @@ Before editing is enabled for `(commit SHA, file path)`:
    git rev-list -1 <commit>..HEAD -- <path>
    ```
 
-   - Empty → safe (e.g. later commits only touched other files).
-   - Non-empty → blocked with:
-
-     > This file has changed after this commit. Editing is disabled to prevent
-     > overwriting newer changes.
-
-Safety is checked again immediately before applying, to reduce races with
-new commits.
+Safety is checked again immediately before applying.
 
 ## Architecture
 
 | Layer | Role |
 |-------|------|
-| `app/src/lib/git/edit-from-history.ts` | Safety checks, load blob text, patch helper, working-tree write |
+| `app/src/lib/git/edit-from-history.ts` | Validation, safety checks, blob load, working-tree write |
 | `app/src/lib/stores/app-store.ts` | `_applyEditFromHistory` → write + refresh + switch to Changes |
 | `app/src/ui/dispatcher/dispatcher.ts` | UI-facing API |
-| `app/src/ui/history/selected-commits.tsx` | Entry points (button, double-click, context menu) |
-| `app/src/ui/history/edit-from-history.tsx` | Simple text editor + Apply/Cancel |
-| `app/src/lib/feature-flag.ts` | `enableEditFromHistory()` (development / preview) |
+| `app/src/ui/history/selected-commits.tsx` | History wiring + Apply |
+| `app/src/ui/diff/side-by-side-diff-row.tsx` | Inline green-line inputs |
+| `app/src/lib/feature-flag.ts` | `enableEditFromHistory()` (on by default in this fork) |
 
-Applying an edit writes the edited content to disk with `writeFile` under a
-path resolved inside the repository root. The change is **not** staged, so it
-appears like any other uncommitted modification.
+## Using this fork
 
-## Feature flag
+Standard Desktop setup only — no special env vars, no extra libraries:
 
-Enabled when development features are on (`__DEV__` or
-`GITHUB_DESKTOP_PREVIEW_FEATURES=1`).
+```shell
+yarn
+yarn build:dev
+yarn start
+```
+
+See [setup docs](contributing/setup.md) for platform prerequisites (Node, Yarn, Python, VS build tools on Windows). Those are the normal GitHub Desktop build requirements, not feature-specific.
 
 ## Limitations (MVP)
 
 - Text files only (binary / image / submodule diffs are excluded).
 - Single-commit selection only (commit ranges not supported).
-- Simple textarea editor (not a full IDE / syntax-highlighted editor).
+- Only green (added) lines are editable in the commit diff.
 - Does not merge into newer file content — blocked instead when unsafe.
 - Does not warn about existing uncommitted edits to the same path (overwrite).

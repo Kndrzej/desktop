@@ -29,6 +29,56 @@ export type EditFromHistoryUnsafeReason =
 export const editFromHistoryBlockedMessage =
   'This file has changed after this commit. Editing is disabled to prevent overwriting newer changes.'
 
+/** Reject path traversal / absolute paths / control characters before any git or fs use. */
+export function assertSafeRepositoryRelativePath(path: string): void {
+  if (path.length === 0 || path.length > 4096) {
+    throw new Error('Invalid repository-relative path.')
+  }
+
+  if (path.includes('\0') || /[\r\n]/.test(path)) {
+    throw new Error('Invalid repository-relative path.')
+  }
+
+  if (Path.isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path)) {
+    throw new Error('Absolute paths are not allowed.')
+  }
+
+  const normalized = Path.posix.normalize(path.replace(/\\/g, '/'))
+  if (
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    normalized.split('/').includes('..')
+  ) {
+    throw new Error('Path traversal is not allowed.')
+  }
+}
+
+/**
+ * Only allow commit identifiers that look like SHAs or simple refs.
+ * Git is invoked with argument arrays (no shell), but we still reject odd
+ * values that should never come from Desktop's commit list UI.
+ */
+export function assertSafeCommitish(commitish: string): void {
+  if (commitish.length === 0 || commitish.length > 256) {
+    throw new Error('Invalid commit identifier.')
+  }
+
+  if (commitish.includes('\0') || /[\r\n\s]/.test(commitish)) {
+    throw new Error('Invalid commit identifier.')
+  }
+
+  // Full or abbreviated SHA, or a conservative ref-like token (no option dashes).
+  const sha = /^[0-9a-fA-F]{7,40}$/
+  const ref = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
+  if (!sha.test(commitish) && !ref.test(commitish)) {
+    throw new Error('Invalid commit identifier.')
+  }
+
+  if (commitish.includes('..') || commitish.startsWith('-')) {
+    throw new Error('Invalid commit identifier.')
+  }
+}
+
 /**
  * Returns true when any commit reachable from HEAD (but not from `commitish`)
  * has modified `path`.
@@ -43,13 +93,10 @@ export async function isPathModifiedAfterCommit(
   commitish: string,
   path: string
 ): Promise<boolean> {
-  const args = [
-    'rev-list',
-    '-1',
-    revRange(commitish, 'HEAD'),
-    '--',
-    path,
-  ]
+  assertSafeCommitish(commitish)
+  assertSafeRepositoryRelativePath(path)
+
+  const args = ['rev-list', '-1', revRange(commitish, 'HEAD'), '--', path]
 
   const result = await git(args, repository.path, 'isPathModifiedAfterCommit', {
     // 128: unborn HEAD / bad revision
@@ -70,6 +117,8 @@ export async function isCommitAncestorOfHead(
   repository: Repository,
   commitish: string
 ): Promise<boolean> {
+  assertSafeCommitish(commitish)
+
   const result = await git(
     ['merge-base', '--is-ancestor', commitish, 'HEAD'],
     repository.path,
@@ -93,6 +142,9 @@ export async function getEditFromHistorySafety(
   commitish: string,
   path: string
 ): Promise<EditFromHistorySafetyResult> {
+  assertSafeCommitish(commitish)
+  assertSafeRepositoryRelativePath(path)
+
   const ancestor = await isCommitAncestorOfHead(repository, commitish)
   if (!ancestor) {
     return {
@@ -129,6 +181,9 @@ export async function getHistoricalTextContents(
   commitish: string,
   path: string
 ): Promise<string | null> {
+  assertSafeCommitish(commitish)
+  assertSafeRepositoryRelativePath(path)
+
   const buffer = await getBlobContents(repository, commitish, path)
 
   // Heuristic: treat files with embedded NUL as binary and refuse in-app editing.
@@ -151,6 +206,8 @@ export function generateFullFileReplacementPatch(
   before: string,
   after: string
 ): string {
+  assertSafeRepositoryRelativePath(path)
+
   const beforeLines = splitLines(before)
   const afterLines = splitLines(after)
 
@@ -184,6 +241,13 @@ export async function applyHistoricalEditToWorkingTree(
   path: string,
   contents: string
 ): Promise<void> {
+  assertSafeRepositoryRelativePath(path)
+
+  // Soft cap to avoid accidental huge writes from a bad UI state.
+  if (contents.length > 50 * 1024 * 1024) {
+    throw new Error('Refusing to write unusually large file contents.')
+  }
+
   const absolutePath = await resolveWritableRepositoryPath(
     repository.path,
     path
@@ -204,6 +268,8 @@ async function resolveWritableRepositoryPath(
   repositoryPath: string,
   relativePath: string
 ): Promise<string> {
+  assertSafeRepositoryRelativePath(relativePath)
+
   const existing = await resolveWithin(repositoryPath, relativePath).catch(
     () => null
   )
@@ -223,7 +289,26 @@ async function resolveWritableRepositoryPath(
     )
   }
 
-  return Path.join(parentAbsolute, Path.basename(relativePath))
+  const absolutePath = Path.join(parentAbsolute, Path.basename(relativePath))
+
+  // Final containment check after join (defends against odd basename edge cases).
+  const repoRoot = await resolveWithin(repositoryPath, '.')
+  if (repoRoot === null) {
+    throw new Error('Unable to resolve repository root.')
+  }
+
+  const relative = Path.relative(repoRoot, absolutePath)
+  if (
+    relative.startsWith('..') ||
+    Path.isAbsolute(relative) ||
+    relative.split(Path.sep).includes('..')
+  ) {
+    throw new Error(
+      `Refusing to write path outside the repository: ${relativePath}`
+    )
+  }
+
+  return absolutePath
 }
 
 /**
@@ -251,10 +336,20 @@ export function applyLineEditsToFileContents(
         ).split('\n')
 
   for (const [lineNumber, content] of lineEdits) {
-    const index = lineNumber - 1
-    if (index >= 0 && index < lines.length) {
-      lines[index] = content
+    if (
+      !Number.isInteger(lineNumber) ||
+      lineNumber < 1 ||
+      lineNumber > lines.length
+    ) {
+      continue
     }
+
+    // Edits are plain text line replacements only (no multi-line injection).
+    if (content.includes('\n') || content.includes('\r')) {
+      throw new Error('Line edits must not contain newline characters.')
+    }
+
+    lines[lineNumber - 1] = content
   }
 
   if (lines.length === 0) {

@@ -10,6 +10,8 @@ import { getTipOrError } from '../../helpers/git'
 import {
   applyHistoricalEditToWorkingTree,
   applyLineEditsToFileContents,
+  assertSafeCommitish,
+  assertSafeRepositoryRelativePath,
   generateFullFileReplacementPatch,
   getEditFromHistorySafety,
   getHistoricalTextContents,
@@ -106,6 +108,33 @@ describe('git/edit-from-history', () => {
         new Map([[2, 'B']])
       )
       assert.equal(result, 'a\nB\nc\n')
+    })
+
+    it('rejects newline injection in line edits', () => {
+      assert.throws(
+        () =>
+          applyLineEditsToFileContents(
+            'a\nb\n',
+            new Map([[1, 'evil\npath']])
+          ),
+        /newline/i
+      )
+    })
+  })
+
+  describe('path and commit validation', () => {
+    it('rejects path traversal', () => {
+      assert.throws(() => assertSafeRepositoryRelativePath('../secret'), /traversal/i)
+      assert.throws(() => assertSafeRepositoryRelativePath('/etc/passwd'), /absolute/i)
+      assert.throws(() => assertSafeRepositoryRelativePath('foo\0bar'), /invalid/i)
+    })
+
+    it('rejects unsafe commitish values', () => {
+      assert.throws(() => assertSafeCommitish('--output=/tmp/x'), /invalid/i)
+      assert.throws(() => assertSafeCommitish('abc def'), /invalid/i)
+      assert.throws(() => assertSafeCommitish('main..HEAD'), /invalid/i)
+      assert.doesNotThrow(() => assertSafeCommitish('6c17991591d818dcef84264b8b4bff72d1e5850a'))
+      assert.doesNotThrow(() => assertSafeCommitish('development'))
     })
   })
 
