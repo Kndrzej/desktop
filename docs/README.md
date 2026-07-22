@@ -37,6 +37,7 @@ These documents contain more details about the internals of GitHub Desktop
 and how things work:
 
  - **[Dialogs](technical/dialogs.md)** - details about the dialog component API
+ - **[Edit From History](edit-from-history.md)** - edit a historical file into the working tree without rewriting commits
  - **[Windows menu bar](technical/windows-menu-bar.md)** - Electron doesn't
     provide inbuilt support for styling the menu for Windows, so we've created
     our own custom components to achieve this.

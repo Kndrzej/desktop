@@ -912,6 +912,48 @@ export class Dispatcher {
     return this.appStore._discardChanges(repository, files, moveToTrash)
   }
 
+  /**
+   * Apply an Edit From History change: write edited historical file content
+   * into the working tree (never rewriting commits), then show Changes.
+   */
+  public applyEditFromHistory(
+    repository: Repository,
+    path: string,
+    contents: string
+  ): Promise<void> {
+    return this.appStore._applyEditFromHistory(repository, path, contents)
+  }
+
+  /**
+   * Safety check for Edit From History: whether later commits touched `path`.
+   */
+  public getEditFromHistorySafety(
+    repository: Repository,
+    commitish: string,
+    path: string
+  ) {
+    return this.appStore._getEditFromHistorySafety(
+      repository,
+      commitish,
+      path
+    )
+  }
+
+  /**
+   * Load UTF-8 contents of a file at a historical commit for Edit From History.
+   */
+  public getHistoricalTextContents(
+    repository: Repository,
+    commitish: string,
+    path: string
+  ) {
+    return this.appStore._getHistoricalTextContents(
+      repository,
+      commitish,
+      path
+    )
+  }
+
   /** Discard the changes from the given diff selection. */
   public discardChangesFromSelection(
     repository: Repository,

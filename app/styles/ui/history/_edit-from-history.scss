@@ -1,0 +1,61 @@
+.edit-from-history-diff {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.edit-from-history-banner.blocked-inline {
+  flex: 0 0 auto;
+  padding: var(--spacing);
+  border-bottom: var(--base-border);
+  background: var(--box-alt-background-color);
+  font-size: var(--font-size-sm);
+  color: var(--text-color);
+
+  p {
+    margin: 0;
+  }
+}
+
+.diff-header-edit-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: var(--spacing-half);
+  gap: var(--spacing-half);
+
+  .edit-from-history-hint {
+    color: var(--text-secondary-color);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+  }
+}
+
+// Inline editing of green (added) History diff lines
+.content.editable-from-history {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+
+  .editable-diff-line {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-family: var(--font-family-monospace);
+    font-size: var(--font-size-sm);
+    line-height: inherit;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+
+    &:focus {
+      background: rgba(46, 160, 67, 0.15);
+    }
+  }
+}

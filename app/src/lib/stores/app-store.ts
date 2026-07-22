@@ -239,6 +239,10 @@ import {
   TerminalOutput,
   HookProgress,
   git,
+  getEditFromHistorySafety,
+  getHistoricalTextContents,
+  applyHistoricalEditToWorkingTree,
+  EditFromHistorySafetyResult,
 } from '../git'
 import {
   installGlobalLFSFilters,
@@ -5702,6 +5706,51 @@ export class AppStore extends TypedBaseStore<IAppState> {
   ) {
     const gitStore = this.gitStoreCache.get(repository)
     await gitStore.discardChangesFromSelection(filePath, diff, selection)
+
+    return this._refreshRepository(repository)
+  }
+
+  /**
+   * Edit From History safety check (path modified after commit?).
+   * Does not mutate the repository.
+   */
+  public _getEditFromHistorySafety(
+    repository: Repository,
+    commitish: string,
+    path: string
+  ): Promise<EditFromHistorySafetyResult> {
+    return getEditFromHistorySafety(repository, commitish, path)
+  }
+
+  /**
+   * Load historical file text for Edit From History editing.
+   * Does not mutate the repository.
+   */
+  public _getHistoricalTextContents(
+    repository: Repository,
+    commitish: string,
+    path: string
+  ): Promise<string | null> {
+    return getHistoricalTextContents(repository, commitish, path)
+  }
+
+  /**
+   * Apply an Edit From History edit by writing to the working tree only.
+   *
+   * This intentionally does not amend, rebase, checkout historical commits,
+   * or stage the result — the Changes tab should show a normal modification.
+   */
+  public async _applyEditFromHistory(
+    repository: Repository,
+    path: string,
+    contents: string
+  ): Promise<void> {
+    await applyHistoricalEditToWorkingTree(repository, path, contents)
+
+    await this._changeRepositorySection(
+      repository,
+      RepositorySectionTab.Changes
+    )
 
     return this._refreshRepository(repository)
   }

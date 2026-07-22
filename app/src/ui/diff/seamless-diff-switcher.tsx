@@ -128,6 +128,17 @@ interface ISeamlessDiffSwitcherProps {
   // Used in getDerivedStateFromProps, no-unused-prop-types doesn't know that
   // eslint-disable-next-line react/no-unused-prop-types
   readonly onHideWhitespaceInDiffChanged: (checked: boolean) => void
+
+  /**
+   * Optional inline Edit From History overrides for green (added) lines.
+   */
+  readonly getEditFromHistoryLine?: (lineNumber: number) => string | undefined
+
+  /** Called when a green History line is edited inline. */
+  readonly onEditFromHistoryLineChanged?: (
+    lineNumber: number,
+    content: string
+  ) => void
 }
 
 interface ISeamlessDiffSwitcherState {
@@ -377,6 +388,8 @@ export class SeamlessDiffSwitcher extends React.Component<
       onOpenSubmodule,
       onChangeImageDiffType,
       onHideWhitespaceInDiffChanged,
+      getEditFromHistoryLine,
+      onEditFromHistoryLineChanged,
     } = this.state.propSnapshot
 
     const className = classNames('seamless-diff-switcher', {
@@ -414,6 +427,10 @@ export class SeamlessDiffSwitcher extends React.Component<
             onChangeImageDiffType={isLoadingDiff ? noop : onChangeImageDiffType}
             onHideWhitespaceInDiffChanged={
               isLoadingDiff ? noop : onHideWhitespaceInDiffChanged
+            }
+            getEditFromHistoryLine={getEditFromHistoryLine}
+            onEditFromHistoryLineChanged={
+              isLoadingDiff ? undefined : onEditFromHistoryLineChanged
             }
           />
         ) : null}

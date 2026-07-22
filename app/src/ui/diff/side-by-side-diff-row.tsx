@@ -241,10 +241,25 @@ interface ISideBySideDiffRowProps {
 
   /** The selectable group details */
   readonly rowSelectableGroup: IRowSelectableGroup | null
+
+  /**
+   * When set, green (added) lines in History can be edited inline.
+   * Returns overridden content for a 1-based new-file line number.
+   */
+  readonly getEditFromHistoryLine?: (lineNumber: number) => string | undefined
+
+  /** Called when the user edits an added line from History. */
+  readonly onEditFromHistoryLineChanged?: (
+    lineNumber: number,
+    content: string
+  ) => void
 }
 
 interface ISideBySideDiffRowState {
   readonly showWhitespaceHint: DiffColumn | undefined
+  /** Local draft while an editable History line is focused (avoids cursor jumps). */
+  readonly editDraftLineNumber: number | null
+  readonly editDraftValue: string | null
 }
 
 export class SideBySideDiffRow extends React.Component<
@@ -253,7 +268,11 @@ export class SideBySideDiffRow extends React.Component<
 > {
   public constructor(props: ISideBySideDiffRowProps) {
     super(props)
-    this.state = { showWhitespaceHint: undefined }
+    this.state = {
+      showWhitespaceHint: undefined,
+      editDraftLineNumber: null,
+      editDraftValue: null,
+    }
   }
 
   public render() {
@@ -441,9 +460,48 @@ export class SideBySideDiffRow extends React.Component<
   }
 
   private renderContent(
-    data: Pick<IDiffRowData, 'content' | 'noNewLineIndicator' | 'tokens'>,
+    data: Pick<IDiffRowData, 'content' | 'noNewLineIndicator' | 'tokens'> & {
+      lineNumber?: number
+    },
     prefix: DiffRowPrefix = DiffRowPrefix.Nothing
   ) {
+    const canEditAddedLine =
+      prefix === DiffRowPrefix.Added &&
+      data.lineNumber !== undefined &&
+      this.props.onEditFromHistoryLineChanged !== undefined
+
+    if (canEditAddedLine && data.lineNumber !== undefined) {
+      const lineNumber = data.lineNumber
+      const saved = this.props.getEditFromHistoryLine?.(lineNumber)
+      const baseValue = saved !== undefined ? saved : data.content
+      const value =
+        this.state.editDraftLineNumber === lineNumber &&
+        this.state.editDraftValue !== null
+          ? this.state.editDraftValue
+          : baseValue
+
+      return (
+        <div className="content editable-from-history">
+          <div className="prefix">&nbsp;&nbsp;{prefix}&nbsp;&nbsp;</div>
+          <input
+            className="editable-diff-line"
+            value={value}
+            spellCheck={false}
+            aria-label={`Edit added line ${lineNumber}`}
+            onFocus={this.onEditableLineFocus(lineNumber, baseValue)}
+            onChange={this.onEditableLineChange(lineNumber)}
+            onBlur={this.onEditableLineBlur}
+          />
+          {data.noNewLineIndicator && (
+            <span className="no-newline-indicator">
+              <Octicon symbol={narrowNoNewlineSymbol} />
+              <span> No newline at end of file</span>
+            </span>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="content">
         <div className="prefix">&nbsp;&nbsp;{prefix}&nbsp;&nbsp;</div>
@@ -461,6 +519,31 @@ export class SideBySideDiffRow extends React.Component<
         </div>
       </div>
     )
+  }
+
+  private onEditableLineFocus =
+    (lineNumber: number, baseValue: string) => () => {
+      this.setState({
+        editDraftLineNumber: lineNumber,
+        editDraftValue: baseValue,
+      })
+    }
+
+  private onEditableLineChange =
+    (lineNumber: number) => (event: React.FormEvent<HTMLInputElement>) => {
+      const content = event.currentTarget.value
+      this.setState({
+        editDraftLineNumber: lineNumber,
+        editDraftValue: content,
+      })
+      this.props.onEditFromHistoryLineChanged?.(lineNumber, content)
+    }
+
+  private onEditableLineBlur = () => {
+    this.setState({
+      editDraftLineNumber: null,
+      editDraftValue: null,
+    })
   }
 
   private getHunkExpansionElementInfo(

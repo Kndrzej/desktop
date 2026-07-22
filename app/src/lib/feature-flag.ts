@@ -125,3 +125,13 @@ export const enableFormattingPreferences = () => true
 
 /** Should the app enable worktree support? */
 export const enableWorktreeSupport = () => true
+
+/**
+ * Should History allow editing a historical file into the current working tree?
+ *
+ * Preview feature: edits never rewrite commits; they only produce uncommitted
+ * working-tree changes when later commits have not touched the same path.
+ */
+export function enableEditFromHistory(): boolean {
+  return enableDevelopmentFeatures()
+}

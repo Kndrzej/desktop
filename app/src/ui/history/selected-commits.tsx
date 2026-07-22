@@ -3,9 +3,9 @@ import { clipboard } from 'electron'
 import * as Path from 'path'
 
 import { Repository } from '../../models/repository'
-import { CommittedFileChange } from '../../models/status'
+import { AppFileStatusKind, CommittedFileChange } from '../../models/status'
 import { Commit } from '../../models/commit'
-import { IDiff, ImageDiffType } from '../../models/diff'
+import { DiffType, IDiff, ImageDiffType } from '../../models/diff'
 
 import { encodePathAsUrl } from '../../lib/path'
 import { revealInFileManager } from '../../lib/app-shell'
@@ -38,6 +38,10 @@ import { ExpandableCommitSummary } from './expandable-commit-summary'
 import { DiffHeader } from '../diff/diff-header'
 import { Account } from '../../models/account'
 import { Emoji } from '../../lib/emoji'
+import { enableEditFromHistory } from '../../lib/feature-flag'
+import {
+  applyLineEditsToFileContents,
+} from '../../lib/git/edit-from-history'
 
 interface ISelectedCommitsProps {
   readonly repository: Repository
@@ -95,6 +99,12 @@ interface ISelectedCommitsProps {
 
 interface ISelectedCommitsState {
   readonly isExpanded: boolean
+  /** Whether there is at least one pending green-line edit */
+  readonly hasLineEdits: boolean
+  readonly editBlockedMessage: string | null
+  readonly isEditApplying: boolean
+  readonly historicalContents: string | null
+  readonly editFileKey: string | null
 }
 
 /** The History component. Contains the commit list, commit summary, and diff. */
@@ -103,16 +113,24 @@ export class SelectedCommits extends React.Component<
   ISelectedCommitsState
 > {
   private readonly loadChangedFilesScheduler = new ThrottledScheduler(200)
+  /** Latest green-line edits; kept in a ref so typing does not re-render the diff. */
+  private readonly lineEditsRef = new Map<number, string>()
 
   public constructor(props: ISelectedCommitsProps) {
     super(props)
 
     this.state = {
       isExpanded: false,
+      hasLineEdits: false,
+      editBlockedMessage: null,
+      isEditApplying: false,
+      historicalContents: null,
+      editFileKey: null,
     }
   }
 
   private onFileSelected = (file: CommittedFileChange) => {
+    this.clearEditFromHistory()
     this.props.dispatcher.changeFileSelection(this.props.repository, file)
   }
 
@@ -132,11 +150,258 @@ export class SelectedCommits extends React.Component<
       if (this.state.isExpanded) {
         this.setState({ isExpanded: false })
       }
+      this.clearEditFromHistory()
+    }
+
+    const nextFileKey = getEditFileKey(nextProps.selectedFile)
+    if (
+      this.state.editFileKey !== null &&
+      nextFileKey !== this.state.editFileKey
+    ) {
+      this.clearEditFromHistory()
+    }
+  }
+
+  public componentDidUpdate(prevProps: ISelectedCommitsProps) {
+    const prevKey = getEditFileKey(prevProps.selectedFile)
+    const nextKey = getEditFileKey(this.props.selectedFile)
+    if (
+      nextKey !== null &&
+      nextKey !== prevKey &&
+      this.canEditFromHistory(this.props.selectedFile)
+    ) {
+      void this.ensureHistoricalContentsLoaded(this.props.selectedFile!)
     }
   }
 
   public componentWillUnmount() {
     this.loadChangedFilesScheduler.clear()
+  }
+
+  private canEditFromHistory(
+    file: CommittedFileChange | null = this.props.selectedFile
+  ): boolean {
+    if (!enableEditFromHistory()) {
+      return false
+    }
+
+    if (file === null) {
+      return false
+    }
+
+    if (this.props.selectedCommits.length !== 1) {
+      return false
+    }
+
+    if (file.status.kind === AppFileStatusKind.Deleted) {
+      return false
+    }
+
+    const diff = this.props.currentDiff
+    if (
+      diff !== null &&
+      (diff.kind === DiffType.Binary ||
+        diff.kind === DiffType.Image ||
+        diff.kind === DiffType.Submodule ||
+        diff.kind === DiffType.Unrenderable)
+    ) {
+      return false
+    }
+
+    return true
+  }
+
+  private clearEditFromHistory = () => {
+    this.lineEditsRef.clear()
+
+    if (
+      !this.state.hasLineEdits &&
+      this.state.editBlockedMessage === null &&
+      this.state.historicalContents === null &&
+      !this.state.isEditApplying
+    ) {
+      return
+    }
+
+    this.setState({
+      hasLineEdits: false,
+      editBlockedMessage: null,
+      isEditApplying: false,
+      historicalContents: null,
+      editFileKey: null,
+    })
+  }
+
+  private ensureHistoricalContentsLoaded = async (
+    file: CommittedFileChange
+  ): Promise<string | null> => {
+    if (
+      this.state.historicalContents !== null &&
+      this.state.editFileKey === getEditFileKey(file) &&
+      this.state.editBlockedMessage === null
+    ) {
+      return this.state.historicalContents
+    }
+
+    const safety = await this.props.dispatcher.getEditFromHistorySafety(
+      this.props.repository,
+      file.commitish,
+      file.path
+    )
+
+    if (safety.kind === 'unsafe') {
+      this.lineEditsRef.clear()
+      this.setState({
+        editBlockedMessage: safety.message,
+        hasLineEdits: false,
+        historicalContents: null,
+        editFileKey: getEditFileKey(file),
+      })
+      return null
+    }
+
+    const contents = await this.props.dispatcher.getHistoricalTextContents(
+      this.props.repository,
+      file.commitish,
+      file.path
+    )
+
+    if (contents === null) {
+      this.lineEditsRef.clear()
+      this.setState({
+        editBlockedMessage:
+          'This file appears to be binary. Editing is not supported.',
+        hasLineEdits: false,
+        historicalContents: null,
+        editFileKey: getEditFileKey(file),
+      })
+      return null
+    }
+
+    this.setState({
+      historicalContents: contents,
+      editBlockedMessage: null,
+      editFileKey: getEditFileKey(file),
+    })
+
+    return contents
+  }
+
+  private getEditFromHistoryLine = (
+    lineNumber: number
+  ): string | undefined => {
+    return this.lineEditsRef.get(lineNumber)
+  }
+
+  private onEditFromHistoryLineChanged = (
+    lineNumber: number,
+    content: string
+  ) => {
+    const file = this.props.selectedFile
+    if (
+      !this.canEditFromHistory(file) ||
+      file === null ||
+      this.state.editBlockedMessage !== null
+    ) {
+      return
+    }
+
+    // Never await here — async parent updates reset the caret and drop keystrokes.
+    const historical = this.state.historicalContents
+    if (historical === null) {
+      const wasEmpty = this.lineEditsRef.size === 0
+      this.lineEditsRef.set(lineNumber, content)
+      if (wasEmpty) {
+        this.setState({ hasLineEdits: true })
+      }
+      void this.ensureHistoricalContentsLoaded(file)
+      return
+    }
+
+    const lines = (
+      historical.endsWith('\n') ? historical.slice(0, -1) : historical
+    ).split('\n')
+    const original = lines[lineNumber - 1]
+    const wasEmpty = this.lineEditsRef.size === 0
+
+    if (original !== undefined && content === original) {
+      this.lineEditsRef.delete(lineNumber)
+    } else {
+      this.lineEditsRef.set(lineNumber, content)
+    }
+
+    const isEmpty = this.lineEditsRef.size === 0
+    if (wasEmpty !== isEmpty) {
+      this.setState({ hasLineEdits: !isEmpty })
+    }
+  }
+
+  private onApplyEditFromHistory = async () => {
+    const file = this.props.selectedFile
+    if (
+      file === null ||
+      this.state.editBlockedMessage !== null ||
+      this.lineEditsRef.size === 0
+    ) {
+      return
+    }
+
+    this.setState({ isEditApplying: true })
+
+    try {
+      const safety = await this.props.dispatcher.getEditFromHistorySafety(
+        this.props.repository,
+        file.commitish,
+        file.path
+      )
+
+      if (safety.kind === 'unsafe') {
+        this.lineEditsRef.clear()
+        this.setState({
+          isEditApplying: false,
+          editBlockedMessage: safety.message,
+          hasLineEdits: false,
+        })
+        return
+      }
+
+      const historical =
+        this.state.historicalContents ??
+        (await this.props.dispatcher.getHistoricalTextContents(
+          this.props.repository,
+          file.commitish,
+          file.path
+        ))
+
+      if (historical === null) {
+        this.setState({
+          isEditApplying: false,
+          editBlockedMessage:
+            'Unable to load historical file contents for apply.',
+        })
+        return
+      }
+
+      const nextContents = applyLineEditsToFileContents(
+        historical,
+        this.lineEditsRef
+      )
+
+      await this.props.dispatcher.applyEditFromHistory(
+        this.props.repository,
+        file.path,
+        nextContents
+      )
+
+      this.clearEditFromHistory()
+    } catch (error) {
+      this.setState({ isEditApplying: false })
+      this.props.dispatcher.postError(
+        error instanceof Error
+          ? error
+          : new Error('Unable to apply edit from history.')
+      )
+    }
   }
 
   private renderDiff() {
@@ -155,23 +420,42 @@ export class SelectedCommits extends React.Component<
       )
     }
 
+    const allowInlineEdit = this.canEditFromHistory(file)
+
     return (
       <div className="diff-container">
         {this.renderDiffHeader()}
-        <SeamlessDiffSwitcher
-          repository={this.props.repository}
-          imageDiffType={this.props.selectedDiffType}
-          file={file}
-          diff={diff}
-          readOnly={true}
-          hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
-          showDiffCheckMarks={false}
-          showSideBySideDiff={this.props.showSideBySideDiff}
-          onOpenBinaryFile={this.props.onOpenBinaryFile}
-          onChangeImageDiffType={this.props.onChangeImageDiffType}
-          onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
-          onOpenSubmodule={this.props.onOpenSubmodule}
-        />
+        {this.state.editBlockedMessage !== null && (
+          <div className="edit-from-history-banner blocked-inline">
+            <p>{this.state.editBlockedMessage}</p>
+          </div>
+        )}
+        <div className="edit-from-history-diff">
+          <SeamlessDiffSwitcher
+            repository={this.props.repository}
+            imageDiffType={this.props.selectedDiffType}
+            file={file}
+            diff={diff}
+            readOnly={true}
+            hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
+            showDiffCheckMarks={false}
+            showSideBySideDiff={this.props.showSideBySideDiff}
+            onOpenBinaryFile={this.props.onOpenBinaryFile}
+            onChangeImageDiffType={this.props.onChangeImageDiffType}
+            onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
+            onOpenSubmodule={this.props.onOpenSubmodule}
+            getEditFromHistoryLine={
+              allowInlineEdit && this.state.editBlockedMessage === null
+                ? this.getEditFromHistoryLine
+                : undefined
+            }
+            onEditFromHistoryLineChanged={
+              allowInlineEdit && this.state.editBlockedMessage === null
+                ? this.onEditFromHistoryLineChanged
+                : undefined
+            }
+          />
+        </div>
       </div>
     )
   }
@@ -183,6 +467,7 @@ export class SelectedCommits extends React.Component<
     }
 
     const { path, status } = selectedFile
+    const showApply = this.canEditFromHistory(selectedFile)
 
     return (
       <DiffHeader
@@ -194,6 +479,11 @@ export class SelectedCommits extends React.Component<
         hideWhitespaceInDiff={this.props.hideWhitespaceInDiff}
         onHideWhitespaceInDiffChanged={this.onHideWhitespaceInDiffChanged}
         onDiffOptionsOpened={this.props.onDiffOptionsOpened}
+        onApplyEditFromHistory={
+          showApply ? this.onApplyEditFromHistory : undefined
+        }
+        isApplyingEditFromHistory={this.state.isEditApplying}
+        editFromHistoryDirtyCount={this.state.hasLineEdits ? 1 : 0}
       />
     )
   }
@@ -470,4 +760,12 @@ function NoCommitSelected() {
       No commit selected
     </div>
   )
+}
+
+function getEditFileKey(file: CommittedFileChange | null): string | null {
+  if (file === null) {
+    return null
+  }
+
+  return `${file.commitish}:${file.path}`
 }

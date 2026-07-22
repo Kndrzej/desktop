@@ -150,6 +150,18 @@ interface ISideBySideDiffProps {
 
   /** Called when the user changes the hide whitespace in diffs setting. */
   readonly onHideWhitespaceInDiffChanged: (checked: boolean) => void
+
+  /**
+   * Optional inline Edit From History overrides for green (added) lines.
+   * Keys are 1-based new-file line numbers.
+   */
+  readonly getEditFromHistoryLine?: (lineNumber: number) => string | undefined
+
+  /** Called when a green History line is edited inline. */
+  readonly onEditFromHistoryLineChanged?: (
+    lineNumber: number,
+    content: string
+  ) => void
 }
 
 interface ISideBySideDiffState {
@@ -926,6 +938,10 @@ export class SideBySideDiff extends React.Component<
             afterClassNames={afterClassNames}
             onHunkExpansionRef={this.onHunkExpansionRef}
             onLineNumberCheckedChanged={this.onLineNumberCheckedChanged}
+            getEditFromHistoryLine={this.props.getEditFromHistoryLine}
+            onEditFromHistoryLineChanged={
+              this.props.onEditFromHistoryLineChanged
+            }
           />
         </div>
       </CellMeasurer>

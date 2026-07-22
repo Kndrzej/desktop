@@ -105,6 +105,18 @@ interface IDiffProps {
 
   /** Called when the user changes the hide whitespace in diffs setting. */
   readonly onHideWhitespaceInDiffChanged: (checked: boolean) => void
+
+  /**
+   * Optional inline Edit From History overrides for green (added) lines.
+   * Keys are 1-based new-file line numbers.
+   */
+  readonly getEditFromHistoryLine?: (lineNumber: number) => string | undefined
+
+  /** Called when a green History line is edited inline. */
+  readonly onEditFromHistoryLineChanged?: (
+    lineNumber: number,
+    content: string
+  ) => void
 }
 
 interface IDiffState {
@@ -298,6 +310,8 @@ export class Diff extends React.Component<IDiffProps, IDiffState> {
         }
         onHideWhitespaceInDiffChanged={this.props.onHideWhitespaceInDiffChanged}
         showDiffCheckMarks={this.props.showDiffCheckMarks}
+        getEditFromHistoryLine={this.props.getEditFromHistoryLine}
+        onEditFromHistoryLineChanged={this.props.onEditFromHistoryLineChanged}
       />
     )
   }

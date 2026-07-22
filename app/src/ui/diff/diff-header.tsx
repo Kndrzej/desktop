@@ -5,6 +5,7 @@ import { IDiff, DiffType } from '../../models/diff'
 import { Octicon, iconForStatus } from '../octicons'
 import { mapStatus } from '../../lib/status'
 import { DiffOptions } from './diff-options'
+import { Button } from '../lib/button'
 
 interface IDiffHeaderProps {
   readonly path: string
@@ -25,6 +26,18 @@ interface IDiffHeaderProps {
 
   /** Called when the user opens the diff options popover */
   readonly onDiffOptionsOpened: () => void
+
+  /**
+   * When provided, shows Apply for Edit From History after the user has
+   * edited green lines inline.
+   */
+  readonly onApplyEditFromHistory?: () => void
+
+  /** Whether Apply is currently running. */
+  readonly isApplyingEditFromHistory?: boolean
+
+  /** Number of edited green lines awaiting apply. */
+  readonly editFromHistoryDirtyCount?: number
 }
 
 /** Displays information about a file */
@@ -37,6 +50,7 @@ export class DiffHeader extends React.Component<IDiffHeaderProps, {}> {
       <div className="header">
         <PathLabel path={this.props.path} status={this.props.status} />
 
+        {this.renderEditFromHistoryActions()}
         {this.renderDiffOptions()}
 
         <Octicon
@@ -44,6 +58,38 @@ export class DiffHeader extends React.Component<IDiffHeaderProps, {}> {
           className={'status status-' + fileStatus.toLowerCase()}
           title={fileStatus}
         />
+      </div>
+    )
+  }
+
+  private renderEditFromHistoryActions() {
+    const {
+      onApplyEditFromHistory,
+      isApplyingEditFromHistory,
+      editFromHistoryDirtyCount,
+    } = this.props
+
+    if (onApplyEditFromHistory === undefined) {
+      return null
+    }
+
+    const dirty = (editFromHistoryDirtyCount ?? 0) > 0
+
+    return (
+      <div className="diff-header-edit-actions">
+        {dirty ? (
+          <Button
+            onClick={onApplyEditFromHistory}
+            disabled={isApplyingEditFromHistory}
+            size="small"
+          >
+            {isApplyingEditFromHistory ? 'Applying…' : 'Apply Changes'}
+          </Button>
+        ) : (
+          <span className="edit-from-history-hint">
+            Edit green lines, then Apply
+          </span>
+        )}
       </div>
     )
   }
